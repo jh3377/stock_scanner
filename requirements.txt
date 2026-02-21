@@ -1,0 +1,6 @@
+streamlit
+FinanceDataReader
+pandas
+beautifulsoup4
+requests
+lxml
