@@ -9,7 +9,7 @@ import io
 
 # 1. 페이지 설정 및 경로 고정
 st.set_page_config(layout="wide", page_title="Ultimate Supply Scanner")
-st.title("📊 통합 혼합형 수급 주도주 스캐너 (안정화 버전)")
+st.title("📊 통합 혼합형 수급 주도주 스캐너 (최종 완성본)")
 
 # 파일 경로 및 기본 설정
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -31,10 +31,9 @@ def calculate_consecutive_days(data_list):
 
 def get_hybrid_universe(target_count):
     try:
-        # KRX 리스팅 시도
+        # 거래소 데이터 로드 안정화 (예외 처리 강화)
         df_krx = fdr.StockListing('KRX')
-    except Exception as e:
-        # 실패 시 KOSPI, KOSDAQ 개별 리스팅 시도 (더 안정적임)
+    except:
         try:
             df_kospi = fdr.StockListing('KOSPI')
             df_kosdaq = fdr.StockListing('KOSDAQ')
@@ -45,7 +44,6 @@ def get_hybrid_universe(target_count):
 
     kospi_cap = df_krx[df_krx['Market'] == 'KOSPI'].sort_values('Marcap', ascending=False).head(target_count)
     kosdaq_cap = df_krx[df_krx['Market'] == 'KOSDAQ'].sort_values('Marcap', ascending=False).head(target_count)
-    
     supply_list = []
     for sosok in ['0', '1']:
         for m_type in ['high_frgn', 'high_inst']:
@@ -62,7 +60,7 @@ def get_hybrid_universe(target_count):
     combined = pd.concat([kospi_cap[['Code', 'Name']], kosdaq_cap[['Code', 'Name']], pd.DataFrame(supply_list)]).drop_duplicates('Code')
     return combined, df_krx
 
-# 2. 사이드바 설정
+# 2. 사이드바 설정 (매수비율 0.1~0.5% 반영)
 with st.sidebar:
     st.header("📅 분석 설정")
     date_list = [(datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(30)]
@@ -77,16 +75,21 @@ with st.sidebar:
     c3 = st.checkbox("최대 PER (배)", value=True); v3 = st.selectbox("PER 설정", list(range(5, 505, 5)), index=19, label_visibility="collapsed")
     c4 = st.checkbox("최대 PBR (배)", value=True); v4 = st.selectbox("PBR 설정", [round(i*0.5, 1) for i in range(1, 41)], index=10, label_visibility="collapsed")
     c_trs = st.checkbox("최소 자사주 비중 (%)", value=False); v_trs = st.selectbox("자사주", list(range(0, 51, 5)), index=1, label_visibility="collapsed")
-    c5 = st.checkbox("최소 거래액 (억)", value=True); v5 = st.selectbox("거래액", [10, 50, 100, 500, 1000, 2000, 5000], index=2, label_visibility="collapsed")
-    c6 = st.checkbox("최소 매수비율 (%)", value=True); v6 = st.selectbox("매수비율 설정", [0.1, 0.2, 0.3, 0.4, 0.5], index=0, label_visibility="collapsed")
+    c5 = st.checkbox("최소 거래액 (억)", value=True); v5 = st.selectbox("거래액", [10, 50, 100, 500, 1000], index=2, label_visibility="collapsed")
+    
+    # 매수비율 필터 범위 (0.1 ~ 0.5)
+    c6 = st.checkbox("최소 매수비율 (%)", value=True)
+    v6 = st.selectbox("매수비율 설정", [0.1, 0.2, 0.3, 0.4, 0.5], index=0, label_visibility="collapsed")
+    
     logic_gate = st.radio("🔄 조건 결합 방식", ("AND (모두 만족)", "OR (하나라도 만족)"), label_visibility="collapsed")
 
-# 3. 메인 화면 구성
+# 3. 메인 분석 화면 (탭 1)
 tab1, tab2 = st.tabs(["🚀 실시간 분석 & 저장", "📈 성과 기록 분석"])
 
 with tab1:
     if st.button("🚀 통합 고속 분석 시작"):
         progress_bar = st.progress(0, text="데이터 수집 중...")
+        status_text = st.empty()
         combined_all, df_krx = get_hybrid_universe(target_count)
         if combined_all.empty: st.stop()
         
@@ -103,7 +106,8 @@ with tab1:
                 if df_p.empty: continue
                 curr_p = int(df_p['Close'].iloc[-1])
                 
-                res_m = requests.get(f"https://finance.naver.com/item/main.naver?code={row.Code}", headers=HEADERS, timeout=5)
+                # 재무 및 자사주 크롤링
+                res_m = requests.get(f"https://finance.naver.com/item/main.naver?code={row.Code}", headers=HEADERS, timeout=3)
                 soup_m = BeautifulSoup(res_m.text, 'html.parser')
                 f_table = soup_m.select_one('div.section.cop_analysis')
                 opm, per, pbr = 0.0, 0.0, 0.0
@@ -112,12 +116,13 @@ with tab1:
                     t_per = f_table.select('tr:-soup-contains("PER") td'); per = to_numeric(t_per[-4].text) if t_per else 0.0
                     t_pbr = f_table.select('tr:-soup-contains("PBR") td'); pbr = to_numeric(t_pbr[-4].text) if t_pbr else 0.0
                 
-                res_c = requests.get(f"https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd={row.Code}", headers=HEADERS, timeout=5)
+                res_c = requests.get(f"https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd={row.Code}", headers=HEADERS, timeout=3)
                 soup_c = BeautifulSoup(res_c.text, 'html.parser')
                 t_row = soup_c.find('th', string=lambda t: t and '자기주식' in t)
                 treasury = to_numeric(t_row.find_next_sibling('td').text) if t_row else 0.0
 
-                res_f = requests.get(f"https://finance.naver.com/item/frgn.naver?code={row.Code}", headers=HEADERS, timeout=5)
+                # 수급 데이터
+                res_f = requests.get(f"https://finance.naver.com/item/frgn.naver?code={row.Code}", headers=HEADERS, timeout=3)
                 soup_f = BeautifulSoup(res_f.text, 'html.parser')
                 rows_f = soup_f.select("table.type2 tr")
                 inst_h, frgn_h, c_iv, c_fv = [], [], 0.0, 0.0
@@ -144,6 +149,7 @@ with tab1:
                 })
             except: continue
             
+        status_text.empty()
         if results:
             df_res = pd.DataFrame(results)
             f_conds = []
@@ -163,6 +169,7 @@ with tab1:
             out_cols = ['종목명', '현재가', '등락률', 'OPM', 'PER', 'PBR', '자사주', '거래액(억)', '외인(억)', '기관(억)', '합계(억)', '매수비율', '기관연속', '외인연속']
             float_cols = ['등락률', 'OPM', 'PER', 'PBR', '자사주', '거래액(억)', '외인(억)', '기관(억)', '합계(억)', '매수비율']
             
+            # 높이 750px 설정 (약 22줄 노출)
             pc1, pc2 = st.columns(2)
             with pc1:
                 st.subheader("🏢 KOSPI")
@@ -171,6 +178,7 @@ with tab1:
                 st.subheader("🚀 KOSDAQ")
                 st.dataframe(df_final[df_final['시장'] == 'KOSDAQ'][out_cols].style.format("{:.1f}", subset=float_cols), use_container_width=True, height=750)
 
+# 4. 성과 기록 분석 화면 (탭 2)
 with tab2:
     st.header("📈 성과 기록 상세 분석 리포트")
     if os.path.exists(HISTORY_FILE):
@@ -178,6 +186,7 @@ with tab2:
             h_data = pd.read_csv(HISTORY_FILE, dtype={'scan_date': str})
             h_data['Symbol'] = h_data['Symbol'].astype(str).str.zfill(6)
             available_dates = sorted(h_data['scan_date'].unique(), reverse=True)
+            
             sc1, sc2 = st.columns(2)
             with sc1: sel_scan_date = st.selectbox("📅 스캔 날짜 선택", available_dates)
             with sc2: sel_compare_date = st.date_input("📅 비교 기준일 선택", datetime.now())
@@ -194,20 +203,29 @@ with tab2:
                         p_now, p_scan = int(p_df['Close'].iloc[-1]), int(r.현재가)
                         perf_list.append({
                             '시장': r.시장, '종목명': r.종목명, '스캔가': f"{p_scan:,}원", '현재가': f"{p_now:,}원", 
-                            '수익률(%)': round(((p_now / p_scan) - 1) * 100, 1), '매수비율': round(r.매수비율, 1),
-                            '외인(억)': round(r.외인(억), 1), '기관(억)': round(r.기관(억), 1), '외인연속': int(r.외인연속), '기관연속': int(r.기관연속)
+                            '수익률(%)': round(((p_now / p_scan) - 1) * 100, 1), '매수비율': round(to_numeric(r.매수비율), 1),
+                            '외인(억)': round(to_numeric(r.외인(억)), 1), '기관(억)': round(to_numeric(r.기관(억)), 1), 
+                            '외인연속': int(r.외인연속), '기관연속': int(r.기관연속)
                         })
                     except: continue
                 status_msg.empty()
                 if perf_list:
                     res_df = pd.DataFrame(perf_list)
                     def style_profit(v): return f"color: {'red' if v < 0 else ('blue' if v > 0 else 'black')}"
-                    c1_res, c2_res = st.columns(2)
+                    
+                    st.subheader(f"🎯 성과 분석 결과 (기준일: {sel_compare_date})")
+                    pc1_res, pc2_res = st.columns(2)
                     perf_cols = ['종목명', '스캔가', '현재가', '수익률(%)', '매수비율', '외인(억)', '기관(억)', '외인연속', '기관연속']
-                    with c1_res:
+                    float_fmt_cols = ['수익률(%)', '매수비율', '외인(억)', '기관(억)']
+
+                    with pc1_res:
                         st.info("🏢 KOSPI 성과")
-                        st.dataframe(res_df[res_df['시장'] == 'KOSPI'].sort_values('수익률(%)', ascending=False)[perf_cols].style.applymap(style_profit, subset=['수익률(%)']).format("{:.1f}", subset=['수익률(%)', '매수비율', '외인(억)', '기관(억)']), use_container_width=True, height=750)
-                    with c2_res:
+                        df_k = res_df[res_df['시장'] == 'KOSPI'].sort_values('수익률(%)', ascending=False)
+                        st.dataframe(df_k[perf_cols].style.applymap(style_profit, subset=['수익률(%)']).format("{:.1f}", subset=float_fmt_cols), use_container_width=True, height=750)
+                    with pc2_res:
                         st.success("🚀 KOSDAQ 성과")
-                        st.dataframe(res_df[res_df['시장'] == 'KOSDAQ'].sort_values('수익률(%)', ascending=False)[perf_cols].style.applymap(style_profit, subset=['수익률(%)']).format("{:.1f}", subset=['수익률(%)', '매수비율', '외인(억)', '기관(억)']), use_container_width=True, height=750)
+                        df_q = res_df[res_df['시장'] == 'KOSDAQ'].sort_values('수익률(%)', ascending=False)
+                        st.dataframe(df_q[perf_cols].style.applymap(style_profit, subset=['수익률(%)']).format("{:.1f}", subset=float_fmt_cols), use_container_width=True, height=750)
+                else:
+                    st.warning("선택한 날짜에 조회 가능한 데이터가 없습니다.")
         except Exception as e: st.error(f"데이터 로드 오류: {e}")
