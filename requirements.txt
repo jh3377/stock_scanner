@@ -1,6 +1,6 @@
 streamlit
-FinanceDataReader
+finance-datareader
 pandas
-beautifulsoup4
 requests
-lxml
+beautifulsoup4
+xlsxwriter
